@@ -1,149 +1,165 @@
-// ===== Mission Control Dashboard — Bulletproof Entry =====
+// ===== Mission Control Dashboard — Premium Core =====
 import './style.css';
 import L from 'leaflet';
 import { Chart, registerables } from 'chart.js';
 
 Chart.register(...registerables);
 
+// ===== CONFIG =====
 const CONFIG = {
-  // Use HTTPS Primary (Most stable)
-  ISS_API: 'https://api.wheretheiss.at/v1/satellites/25544',
-  ISS_API_ALT: 'https://api.allorigins.win/get?url=' + encodeURIComponent('http://api.open-notify.org/iss-now.json'),
+  // Switched to a secure proxy tunnel to allow HTTP APIs on HTTPS (Vercel)
+  ISS_API: 'https://api.allorigins.win/get?url=' + encodeURIComponent('http://api.open-notify.org/iss-now.json'),
   ASTROS_API: 'https://api.allorigins.win/get?url=' + encodeURIComponent('http://api.open-notify.org/astros.json'),
+  
+  // NewsData.io
   NEWS_API: 'https://newsdata.io/api/1/news',
   NEWS_API_KEY: import.meta.env.VITE_NEWS_API_KEY || 'pub_da26954bfd324eefb5b78437b8fafd67',
+  
+  // AI Chatbot (HF)
   HF_API: 'https://router.huggingface.co/v1/chat/completions',
   HF_TOKEN: import.meta.env.VITE_HF_TOKEN || '',
   HF_MODEL: 'Qwen/Qwen3-0.6B:featherless-ai',
-  INTERVAL: 15000,
+  
+  ISS_INTERVAL_MS: 15000,
+  MAX_POSITIONS: 20,
+  MAX_SPEED_POINTS: 30,
 };
 
+// ===== STATE =====
 const state = {
-  pos: [],
-  speeds: [],
-  times: [],
-  last: null,
-  speed: 0,
-  place: 'Remote Area',
+  issPositions: [],
+  issSpeeds: [],
+  speedTimestamps: [],
+  lastPos: null,
+  lastTime: null,
+  currentSpeed: 0,
+  nearestPlace: 'Loading...',
   astronauts: [],
   news: [],
+  chatMessages: [],
+  theme: localStorage.getItem('mc-theme') || 'dark',
   map: null,
-  marker: null,
-  path: null,
-  charts: {},
+  issMarker: null,
+  issPath: null,
+  speedChart: null,
+  newsChart: null,
 };
 
 // =====================
 //   INITIALIZATION
 // =====================
-window.addEventListener('load', async () => {
-  try {
-    console.log('Initializing Mission Control...');
-    initTheme();
-    initMap();
-    initCharts();
-    
-    // Initial Fetch
-    fetchISS();
-    fetchAstros();
-    fetchNews();
+document.addEventListener('DOMContentLoaded', async () => {
+  console.log('🚀 System Booting...');
+  
+  initTheme();
+  initMap();
+  initCharts();
+  loadChatHistory();
 
-    setInterval(fetchISS, CONFIG.INTERVAL);
-    bindEvents();
-    console.log('Mission Control Ready.');
-  } catch (err) {
-    console.error('Boot Error:', err);
-  }
+  // Load Initial Data
+  await Promise.allSettled([
+    fetchISSPosition(),
+    fetchAstronauts(),
+    fetchNews()
+  ]);
+
+  setInterval(fetchISSPosition, CONFIG.ISS_INTERVAL_MS);
+  bindEvents();
 });
 
 // =====================
 //   ISS TRACKING
 // =====================
-async function fetchISS() {
-  let lat, lng, ts;
+async function fetchISSPosition() {
   try {
-    const res = await fetch(CONFIG.ISS_API);
-    const data = await res.json();
-    lat = data.latitude;
-    lng = data.longitude;
-    ts = data.timestamp * 1000;
-  } catch (e) {
-    try {
-      const res = await fetch(CONFIG.ISS_API_ALT);
-      const wrapper = await res.json();
-      const raw = JSON.parse(wrapper.contents);
-      lat = parseFloat(raw.iss_position.latitude);
-      lng = parseFloat(raw.iss_position.longitude);
-      ts = raw.timestamp * 1000;
-    } catch (err) {
-      updateUI('Offline');
-      return;
+    const res = await fetch(CONFIG.ISS_API, { signal: AbortSignal.timeout(8000) });
+    const wrapper = await res.json();
+    const data = JSON.parse(wrapper.contents);
+
+    if (data.message !== 'success') throw new Error('API Message Error');
+
+    const lat = parseFloat(data.iss_position.latitude);
+    const lng = parseFloat(data.iss_position.longitude);
+    const ts  = data.timestamp * 1000;
+
+    // Speed (Haversine)
+    if (state.lastPos) {
+      const dist = haversine(state.lastPos.lat, state.lastPos.lng, lat, lng);
+      const dt = (ts - state.lastTime) / 1000;
+      if (dt > 0) state.currentSpeed = (dist / dt) * 3600;
+    } else {
+      state.currentSpeed = 27600; // Average orbital speed
     }
+
+    state.lastPos = { lat, lng };
+    state.lastTime = ts;
+
+    // History
+    state.issPositions.push([lat, lng]);
+    if (state.issPositions.length > CONFIG.MAX_POSITIONS) state.issPositions.shift();
+
+    state.issSpeeds.push(+state.currentSpeed.toFixed(2));
+    state.speedTimestamps.push(new Date(ts).toLocaleTimeString());
+    if (state.issSpeeds.length > CONFIG.MAX_SPEED_POINTS) {
+      state.issSpeeds.shift(); state.speedTimestamps.shift();
+    }
+
+    updateISSUI(lat, lng);
+    updateMap(lat, lng);
+    updateSpeedChart();
+    
+    // Reverse Geocode
+    reverseGeocode(lat, lng);
+
+  } catch (err) {
+    console.error('ISS Error:', err);
+    setText('iss-coords', 'Offline');
   }
-
-  // Speed (Haversine)
-  if (state.last) {
-    const d = haversine(state.last.lat, state.last.lng, lat, lng);
-    const t = (ts - state.last.ts) / 1000;
-    if (t > 0) state.speed = (d / t) * 3600;
-  } else {
-    state.speed = 27600;
-  }
-
-  state.last = { lat, lng, ts };
-  state.pos.push([lat, lng]);
-  if (state.pos.length > 20) state.pos.shift();
-
-  // Update Stats
-  state.speeds.push(state.speed);
-  state.times.push(new Date(ts).toLocaleTimeString());
-  if (state.speeds.length > 30) { state.speeds.shift(); state.times.shift(); }
-
-  updateUI(lat, lng);
-  updateMap(lat, lng);
-  updateCharts();
 }
 
-function updateUI(lat, lng) {
-  if (lat === 'Offline') {
-    setText('iss-coords', 'Offline');
-    setText('iss-speed', 'Offline');
-    return;
-  }
-  setText('iss-coords', `${lat.toFixed(2)}, ${lng.toFixed(2)}`);
-  setText('iss-speed', `${state.speed.toFixed(0)} km/h`);
-  setText('iss-location', state.place);
-  setText('iss-tracked', state.pos.length);
+function updateISSUI(lat, lng) {
+  setText('iss-coords', `${lat.toFixed(3)}, ${lng.toFixed(3)}`);
+  setText('iss-speed',  `${state.currentSpeed.toFixed(0)} km/h`);
+  setText('iss-tracked', state.issPositions.length);
 }
 
 function updateMap(lat, lng) {
-  if (!state.map) return;
-  state.marker.setLatLng([lat, lng]);
-  state.path.setLatLngs(state.pos);
+  state.issMarker.setLatLng([lat, lng]);
+  state.issPath.setLatLngs(state.issPositions);
   state.map.panTo([lat, lng]);
-  state.marker.setPopupContent(`<b>ISS Live</b><br>${state.speed.toFixed(0)} km/h`);
+  state.issMarker.setPopupContent(`<b>ISS Live</b><br>Speed: ${state.currentSpeed.toFixed(0)} km/h`);
+}
+
+async function reverseGeocode(lat, lng) {
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=5`);
+    const d = await res.json();
+    state.nearestPlace = d.address?.country || d.address?.ocean || 'Remote Area';
+  } catch {
+    state.nearestPlace = 'Unknown Location';
+  }
+  setText('iss-location', state.nearestPlace);
 }
 
 // =====================
-//   ASTRONAUTS & NEWS
+//   ASTRONAUTS
 // =====================
-async function fetchAstros() {
+async function fetchAstronauts() {
   try {
     const res = await fetch(CONFIG.ASTROS_API);
     const wrapper = await res.json();
     const data = JSON.parse(wrapper.contents);
     state.astronauts = data.people || [];
     setText('astro-count', state.astronauts.length);
-    renderAstros();
+    renderAstronauts();
   } catch (e) {
-    state.astronauts = [{name: 'Space Mission Active', craft: 'ISS'}];
-    renderAstros();
+    state.astronauts = [{ name: 'Data Unavailable', craft: 'N/A' }];
+    renderAstronauts();
   }
 }
 
-function renderAstros() {
+function renderAstronauts() {
   const el = document.getElementById('astronauts-list');
-  if (!el) return;
   el.innerHTML = state.astronauts.map(a => `
     <div class="astronaut-item">
       <div class="astronaut-avatar">${a.name[0]}</div>
@@ -154,65 +170,153 @@ function renderAstros() {
     </div>`).join('');
 }
 
+// =====================
+//   NEWS
+// =====================
 async function fetchNews() {
   try {
     const res = await fetch(`${CONFIG.NEWS_API}?apikey=${CONFIG.NEWS_API_KEY}&language=en&size=10`);
     const data = await res.json();
     if (data.status === 'success') {
-      state.news = data.results;
+      state.news = data.results.map(a => ({
+        title: a.title,
+        source: a.source_id,
+        date: a.pubDate,
+        image: a.image_url,
+        description: a.description || 'No summary.',
+        url: a.link,
+        category: a.category?.[0] || 'general'
+      }));
       renderNews();
+      updateNewsChart();
     }
   } catch (e) {
-    const el = document.getElementById('news-list');
-    if (el) el.innerHTML = '<p>News temporarily unavailable.</p>';
+    document.getElementById('news-list').innerHTML = '<p class="muted-center">News feed currently offline.</p>';
   }
 }
 
 function renderNews() {
   const el = document.getElementById('news-list');
-  if (!el) return;
   el.innerHTML = state.news.map((a, i) => `
-    <div class="news-item">
+    <div class="news-item" onclick="toggleArticle(${i})">
       <div class="news-item-header">
-        <div class="news-num">${i+1}</div>
+        <div class="news-num">${i + 1}</div>
+        <img class="news-thumb" src="${a.image || 'https://placehold.co/50x50/2a2a3d/e28743?text=NEWS'}" />
         <div class="news-body">
-          <div class="news-meta"><span class="news-source">${a.source_id}</span></div>
+          <div class="news-meta">
+            <span class="news-source">${a.source.toUpperCase()}</span>
+            <span class="news-date">${new Date(a.date).toLocaleDateString()}</span>
+          </div>
           <div class="news-title">${a.title}</div>
         </div>
+      </div>
+      <div class="news-expand" id="news-expand-${i}">
+        <p class="news-desc">${a.description}</p>
+        <a href="${a.url}" target="_blank" class="btn btn-primary btn-sm" onclick="event.stopPropagation()">Read More →</a>
       </div>
     </div>`).join('');
 }
 
+window.toggleArticle = (i) => {
+  const el = document.getElementById(`news-expand-${i}`);
+  el.classList.toggle('news-expand--open');
+};
+
 // =====================
-//   CORE UTILS
+//   CHATBOT
+// =====================
+function loadChatHistory() {
+  try {
+    const saved = localStorage.getItem('mc-chat');
+    if (saved) state.chatMessages = JSON.parse(saved);
+  } catch { state.chatMessages = []; }
+  renderChat();
+}
+
+function renderChat() {
+  const box = document.getElementById('chat-messages');
+  box.innerHTML = `<div class="chat-message bot-message"><p>Mission Control AI Online. How can I assist you today?</p></div>`;
+  state.chatMessages.forEach(m => {
+    const div = document.createElement('div');
+    div.className = `chat-message ${m.role === 'user' ? 'user-message' : 'bot-message'}`;
+    div.innerHTML = `<p>${m.content}</p>`;
+    box.appendChild(div);
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+async function sendChat(text) {
+  if (!text.trim()) return;
+  state.chatMessages.push({ role: 'user', content: text });
+  renderChat();
+  
+  document.getElementById('chat-typing').classList.remove('hidden');
+
+  try {
+    const res = await fetch(CONFIG.HF_API, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${CONFIG.HF_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: CONFIG.HF_MODEL,
+        messages: [{ role: 'system', content: 'You are a Mission Control Assistant. Answer using dashboard data.' }, ...state.chatMessages.slice(-5)],
+      })
+    });
+    const result = await res.json();
+    const reply = result.choices?.[0]?.message?.content || 'System connection error.';
+    state.chatMessages.push({ role: 'assistant', content: reply });
+  } catch (e) {
+    state.chatMessages.push({ role: 'assistant', content: 'AI offline. Check internet connection.' });
+  }
+
+  document.getElementById('chat-typing').classList.add('hidden');
+  renderChat();
+  localStorage.setItem('mc-chat', JSON.stringify(state.chatMessages.slice(-20)));
+}
+
+// =====================
+//   CHARTS & MAP
 // =====================
 function initMap() {
-  const el = document.getElementById('iss-map');
-  if (!el) return;
-  state.map = L.map('iss-map').setView([0, 0], 2);
+  state.map = L.map('iss-map', { center: [0, 0], zoom: 2 });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(state.map);
-  state.marker = L.marker([0, 0]).addTo(state.map).bindPopup('ISS');
-  state.path = L.polyline([], {color: '#e28743'}).addTo(state.map);
+  const icon = L.divIcon({ html: '<div style="font-size:30px;">🛰️</div>', iconSize: [30, 30] });
+  state.issMarker = L.marker([0, 0], { icon }).addTo(state.map).bindPopup('ISS Tracking...');
+  state.issPath = L.polyline([], { color: '#e28743', weight: 2, dashArray: '5,5' }).addTo(state.map);
 }
 
 function initCharts() {
-  const ctxEl = document.getElementById('speed-chart');
-  if (!ctxEl) return;
-  const ctx = ctxEl.getContext('2d');
-  state.charts.speed = new Chart(ctx, {
+  const sCtx = document.getElementById('speed-chart').getContext('2d');
+  state.speedChart = new Chart(sCtx, {
     type: 'line',
-    data: { labels: [], datasets: [{ label: 'km/h', data: [], borderColor: '#e28743', fill: true }] },
+    data: { labels: [], datasets: [{ label: 'ISS Speed (km/h)', data: [], borderColor: '#e28743', backgroundColor: 'rgba(226,135,67,0.1)', fill: true, tension: 0.4 }] },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+
+  const nCtx = document.getElementById('news-chart').getContext('2d');
+  state.newsChart = new Chart(nCtx, {
+    type: 'doughnut',
+    data: { labels: [], datasets: [{ data: [], backgroundColor: ['#e28743', '#3498db', '#2ecc71', '#e74c3c'] }] },
     options: { responsive: true, maintainAspectRatio: false }
   });
 }
 
-function updateCharts() {
-  if (!state.charts.speed) return;
-  state.charts.speed.data.labels = state.times;
-  state.charts.speed.data.datasets[0].data = state.speeds;
-  state.charts.speed.update('none');
+function updateSpeedChart() {
+  state.speedChart.data.labels = state.speedTimestamps;
+  state.speedChart.data.datasets[0].data = state.issSpeeds;
+  state.speedChart.update('none');
 }
 
+function updateNewsChart() {
+  const counts = {};
+  state.news.forEach(a => counts[a.category] = (counts[a.category] || 0) + 1);
+  state.newsChart.data.labels = Object.keys(counts);
+  state.newsChart.data.datasets[0].data = Object.values(counts);
+  state.newsChart.update();
+}
+
+// =====================
+//   UTILS
+// =====================
 function haversine(lat1, lon1, lat2, lon2) {
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -222,7 +326,7 @@ function haversine(lat1, lon1, lat2, lon2) {
 }
 
 function initTheme() {
-  document.documentElement.setAttribute('data-theme', localStorage.getItem('theme') || 'dark');
+  document.documentElement.setAttribute('data-theme', state.theme);
 }
 
 function setText(id, val) {
@@ -231,14 +335,21 @@ function setText(id, val) {
 }
 
 function bindEvents() {
-  const themeBtn = document.getElementById('theme-toggle');
-  if (themeBtn) {
-    themeBtn.addEventListener('click', () => {
-      const t = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', t);
-      localStorage.setItem('theme', t);
-    });
-  }
-  const refreshBtn = document.getElementById('iss-refresh-btn');
-  if (refreshBtn) refreshBtn.addEventListener('click', fetchISS);
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    state.theme = state.theme === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('mc-theme', state.theme);
+    initTheme();
+  });
+  document.getElementById('iss-refresh-btn').addEventListener('click', fetchISSPosition);
+  document.getElementById('chatbot-toggle').addEventListener('click', () => {
+    document.getElementById('chatbot-window').classList.toggle('chatbot-hidden');
+  });
+  document.getElementById('chatbot-close').addEventListener('click', () => {
+    document.getElementById('chatbot-window').classList.add('chatbot-hidden');
+  });
+  document.getElementById('chat-send').addEventListener('click', () => {
+    const inp = document.getElementById('chat-input');
+    sendChat(inp.value);
+    inp.value = '';
+  });
 }
