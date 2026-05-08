@@ -124,21 +124,28 @@ async function fetchISSPosition() {
     const lat = parseFloat(data.latitude);
     const lng = parseFloat(data.longitude);
     const ts  = data.timestamp * 1000;
-    // Speed via Haversine (REQUIRED by problem statement)
+    const velocity = data.velocity || 0;
+
+    // Speed Calculation
     if (state.lastPos && state.lastTime) {
       const dt = (ts - state.lastTime) / 1000; // seconds
       if (dt > 0) {
+        // Use Haversine for the "calculated" speed as requested
         const dist = haversine(state.lastPos.lat, state.lastPos.lng, lat, lng);
         state.currentSpeed = (dist / dt) * 3600; // km/h
-        
-        if (state.issSpeeds.length >= CONFIG.MAX_SPEED_POINTS) {
-          state.issSpeeds.shift(); state.speedTimestamps.shift();
-        }
-        state.issSpeeds.push(+state.currentSpeed.toFixed(2));
-        state.speedTimestamps.push(new Date(ts).toLocaleTimeString());
-        updateSpeedChart();
       }
+    } else {
+      // First data point: Use API velocity so chart isn't empty
+      state.currentSpeed = velocity;
     }
+
+    // Update speed data points
+    if (state.issSpeeds.length >= CONFIG.MAX_SPEED_POINTS) {
+      state.issSpeeds.shift(); state.speedTimestamps.shift();
+    }
+    state.issSpeeds.push(+state.currentSpeed.toFixed(2));
+    state.speedTimestamps.push(new Date(ts).toLocaleTimeString());
+    updateSpeedChart();
 
     state.lastPos  = { lat, lng };
     state.lastTime = ts;
