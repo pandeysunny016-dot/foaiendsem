@@ -208,6 +208,9 @@ function renderAstronauts() {
 //   NEWS
 // =====================
 async function fetchNews() {
+  const listEl = document.getElementById('news-list');
+  if (listEl) listEl.innerHTML = '<div class="spinner"></div>';
+  
   try {
     const res = await fetch(`${CONFIG.NEWS_API}?apikey=${CONFIG.NEWS_API_KEY}&language=en&size=10`);
     const data = await res.json();
@@ -223,6 +226,7 @@ async function fetchNews() {
       }));
       renderNews();
       updateNewsChart();
+      showToast('News Feed Updated', 'success');
     }
   } catch (e) {
     document.getElementById('news-list').innerHTML = '<p class="muted-center">News feed currently offline.</p>';
@@ -389,6 +393,9 @@ function bindEvents() {
   document.getElementById('iss-refresh-btn').addEventListener('click', () => {
     fetchISSPosition();
     showToast('ISS Data Refreshed', 'success');
+  });
+  document.getElementById('news-refresh-btn').addEventListener('click', () => {
+    fetchNews();
   });
   document.getElementById('auto-refresh-toggle').addEventListener('click', toggleAutoRefresh);
   document.getElementById('chatbot-toggle').addEventListener('click', () => {
