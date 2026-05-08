@@ -115,8 +115,13 @@ function initMap() {
 //   ISS TRACKING
 // =====================
 async function fetchISSPosition() {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
+
   try {
-    const res = await fetch(CONFIG.ISS_API);
+    const res = await fetch(CONFIG.ISS_API, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
     if (!res.ok) throw new Error('ISS API ' + res.status);
     const data = await res.json();
 
@@ -163,9 +168,18 @@ async function fetchISSPosition() {
     });
 
   } catch (err) {
+    clearTimeout(timeoutId);
     console.error('ISS fetch:', err);
-    showToast('ISS data error (Server might be busy)', 'error');
-    // If it fails, we keep the old data visible but show the error
+    
+    if (err.name === 'AbortError') {
+      showToast('ISS Connection Timeout — Retrying...', 'warning');
+    } else {
+      showToast('ISS API blocked or down. Check connection.', 'error');
+    }
+    
+    setText('iss-coords', 'Offline');
+    setText('iss-speed', 'Offline');
+    setText('iss-location', 'Offline');
   }
 }
 
