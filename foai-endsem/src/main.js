@@ -43,6 +43,8 @@ const state = {
   issPath: null,
   speedChart: null,
   newsChart: null,
+  issTimer: null,
+  autoRefresh: true,
 };
 
 // =====================
@@ -114,6 +116,24 @@ async function fetchISSPosition() {
   } catch (err) {
     console.error('ISS Error:', err);
     // Silent fail - don't clear UI so old data stays
+  }
+}
+
+function toggleAutoRefresh() {
+  state.autoRefresh = !state.autoRefresh;
+  const btn = document.getElementById('auto-refresh-toggle');
+  
+  if (state.autoRefresh) {
+    state.issTimer = setInterval(fetchISSPosition, CONFIG.ISS_INTERVAL_MS);
+    btn.textContent = 'Auto-Refresh: ON';
+    btn.className = 'badge badge-success';
+    showToast('Auto-refresh enabled', 'success');
+  } else {
+    clearInterval(state.issTimer);
+    state.issTimer = null;
+    btn.textContent = 'Auto-Refresh: OFF';
+    btn.className = 'badge';
+    showToast('Auto-refresh disabled', 'info');
   }
 }
 
@@ -348,13 +368,29 @@ function setText(id, val) {
   if (el) el.textContent = val;
 }
 
+function showToast(msg, type = 'info') {
+  const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️' };
+  const t = document.createElement('div');
+  t.className = `toast toast-${type}`;
+  t.innerHTML = `<span>${icons[type]}</span> ${msg}`;
+  const container = document.getElementById('toast-container');
+  if (container) {
+    container.appendChild(t);
+    setTimeout(() => t.remove(), 3200);
+  }
+}
+
 function bindEvents() {
   document.getElementById('theme-toggle').addEventListener('click', () => {
     state.theme = state.theme === 'dark' ? 'light' : 'dark';
     localStorage.setItem('mc-theme', state.theme);
     initTheme();
   });
-  document.getElementById('iss-refresh-btn').addEventListener('click', fetchISSPosition);
+  document.getElementById('iss-refresh-btn').addEventListener('click', () => {
+    fetchISSPosition();
+    showToast('ISS Data Refreshed', 'success');
+  });
+  document.getElementById('auto-refresh-toggle').addEventListener('click', toggleAutoRefresh);
   document.getElementById('chatbot-toggle').addEventListener('click', () => {
     document.getElementById('chatbot-window').classList.toggle('chatbot-hidden');
   });
