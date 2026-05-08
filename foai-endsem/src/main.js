@@ -7,9 +7,9 @@ Chart.register(...registerables);
 
 // ===== CONFIG =====
 const CONFIG = {
-  // Switched back to Open Notify as requested (using proxy for HTTPS compatibility)
-  ISS_API: 'https://api.allorigins.win/get?url=' + encodeURIComponent('http://api.open-notify.org/iss-now.json'),
-  ASTROS_API: 'https://api.allorigins.win/get?url=' + encodeURIComponent('http://api.open-notify.org/astros.json'),
+  // Using JSONP for Open Notify as requested to handle CORS natively
+  ISS_API: 'http://api.open-notify.org/iss-now.json',
+  ASTROS_API: 'http://api.open-notify.org/astros.json',
   // NewsData.io — correct endpoint for pub_ keys
   NEWS_API: 'https://newsdata.io/api/1/news',
   NEWS_API_KEY: import.meta.env.VITE_NEWS_API_KEY || '',
@@ -115,17 +115,9 @@ function initMap() {
 //   ISS TRACKING
 // =====================
 async function fetchISSPosition() {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
-
   try {
-    const res = await fetch(CONFIG.ISS_API, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (!res.ok) throw new Error('ISS API ' + res.status);
-    const wrapper = await res.json();
-    const data = JSON.parse(wrapper.contents);
-
+    const data = await fetchJSONP(CONFIG.ISS_API);
+    
     // Data format for Open Notify: { iss_position: { latitude, longitude }, timestamp, message: "success" }
     if (data.message !== 'success') throw new Error('ISS API returned error');
 
@@ -259,11 +251,7 @@ const rad = d => d * Math.PI / 180;
 // =====================
 async function fetchAstronauts() {
   try {
-    const res = await fetch(CONFIG.ASTROS_API);
-    if (!res.ok) throw new Error('API down');
-    const wrapper = await res.json();
-    const data = JSON.parse(wrapper.contents);
-    
+    const data = await fetchJSONP(CONFIG.ASTROS_API);
     state.astronauts = data.people || [];
     setText('astro-count', data.number || state.astronauts.length);
     renderAstronauts();
@@ -658,6 +646,29 @@ function showToast(msg, type = 'info') {
   t.innerHTML = `<span>${icons[type]}</span> ${msg}`;
   document.getElementById('toast-container').appendChild(t);
   setTimeout(() => t.remove(), 3200);
+}
+
+// ===== JSONP HELPER =====
+function fetchJSONP(url) {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'cb_' + Math.round(Math.random() * 1000000);
+    window[callbackName] = (data) => {
+      delete window[callbackName];
+      const s = document.getElementById(callbackName);
+      if (s) document.body.removeChild(s);
+      resolve(data);
+    };
+    const script = document.createElement('script');
+    script.id = callbackName;
+    script.src = `${url}${url.indexOf('?') >= 0 ? '&' : '?'}callback=${callbackName}`;
+    script.onerror = () => {
+      delete window[callbackName];
+      const s = document.getElementById(callbackName);
+      if (s) document.body.removeChild(s);
+      reject(new Error('JSONP Request failed'));
+    };
+    document.body.appendChild(script);
+  });
 }
 
 // =====================
