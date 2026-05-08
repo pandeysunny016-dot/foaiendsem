@@ -7,9 +7,9 @@ Chart.register(...registerables);
 
 // ===== CONFIG =====
 const CONFIG = {
-  // Switched to a more reliable API since open-notify is often unstable
-  ISS_API: 'https://api.wheretheiss.at/v1/satellites/25544',
-  ASTROS_API: 'https://api.open-notify.org/astros.json',
+  // Switched back to Open Notify as requested (using proxy for HTTPS compatibility)
+  ISS_API: 'https://api.allorigins.win/get?url=' + encodeURIComponent('http://api.open-notify.org/iss-now.json'),
+  ASTROS_API: 'https://api.allorigins.win/get?url=' + encodeURIComponent('http://api.open-notify.org/astros.json'),
   // NewsData.io — correct endpoint for pub_ keys
   NEWS_API: 'https://newsdata.io/api/1/news',
   NEWS_API_KEY: import.meta.env.VITE_NEWS_API_KEY || '',
@@ -123,15 +123,18 @@ async function fetchISSPosition() {
     clearTimeout(timeoutId);
 
     if (!res.ok) throw new Error('ISS API ' + res.status);
-    const data = await res.json();
+    const wrapper = await res.json();
+    const data = JSON.parse(wrapper.contents);
 
-    // Data format for wheretheiss.at: { latitude, longitude, velocity, timestamp, ... }
-    const lat = parseFloat(data.latitude);
-    const lng = parseFloat(data.longitude);
+    // Data format for Open Notify: { iss_position: { latitude, longitude }, timestamp, message: "success" }
+    if (data.message !== 'success') throw new Error('ISS API returned error');
+
+    const lat = parseFloat(data.iss_position.latitude);
+    const lng = parseFloat(data.iss_position.longitude);
     const ts  = data.timestamp * 1000;
-    const velocity = data.velocity || 0;
+    const velocity = 0; // Open Notify doesn't provide velocity
 
-    // Speed Calculation
+    // Speed Calculation (Haversine required)
     if (state.lastPos && state.lastTime) {
       const dt = (ts - state.lastTime) / 1000; // seconds
       if (dt > 0) {
@@ -258,7 +261,9 @@ async function fetchAstronauts() {
   try {
     const res = await fetch(CONFIG.ASTROS_API);
     if (!res.ok) throw new Error('API down');
-    const data = await res.json();
+    const wrapper = await res.json();
+    const data = JSON.parse(wrapper.contents);
+    
     state.astronauts = data.people || [];
     setText('astro-count', data.number || state.astronauts.length);
     renderAstronauts();
