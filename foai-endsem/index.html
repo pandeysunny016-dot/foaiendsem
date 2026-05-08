@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Real-Time ISS Tracking & News Intelligence Dashboard with AI Chatbot — track the International Space Station live, read breaking news, and chat with an AI assistant." />
+  <title>Mission Control — Real-Time ISS & News Dashboard</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+<body>
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+
+  <!-- Main App -->
+  <div id="app">
+    <!-- Header -->
+    <header id="main-header">
+      <div class="header-left">
+        <div class="logo-badge">
+          <span class="logo-icon">🛰️</span>
+          <div>
+            <p class="logo-label">MISSION CONTROL DASHBOARD</p>
+            <h1 id="page-title">Real-Time ISS and News Intelligence</h1>
+          </div>
+        </div>
+      </div>
+      <div class="header-right">
+        <button id="theme-toggle" aria-label="Toggle dark/light mode">
+          <span class="theme-icon">🌙</span>
+          <span class="theme-text">Switch to Light</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- ISS Section -->
+    <section id="iss-section" class="dashboard-section">
+      <div class="section-row">
+        <!-- ISS Live Tracking -->
+        <div class="card card-large" id="iss-tracking-card">
+          <div class="card-header">
+            <h2>ISS Live Tracking</h2>
+            <div class="card-actions">
+              <button id="iss-refresh-btn" class="btn btn-outline">Refresh Now</button>
+              <button id="auto-refresh-toggle" class="badge badge-success" style="cursor:pointer; border:1px solid var(--border-active);">Auto-Refresh: ON</button>
+            </div>
+          </div>
+          <!-- ISS Stats -->
+          <div class="iss-stats-grid">
+            <div class="stat-card">
+              <p class="stat-label">Latitude / Longitude</p>
+              <p class="stat-value" id="iss-coords">Loading...</p>
+            </div>
+            <div class="stat-card">
+              <p class="stat-label">Speed</p>
+              <p class="stat-value" id="iss-speed">Loading...</p>
+            </div>
+            <div class="stat-card">
+              <p class="stat-label">Nearest Place</p>
+              <p class="stat-value" id="iss-location">Loading...</p>
+            </div>
+            <div class="stat-card">
+              <p class="stat-label">Tracked Positions</p>
+              <p class="stat-value" id="iss-tracked">0</p>
+            </div>
+          </div>
+          <!-- Map -->
+          <div id="iss-map" class="map-container"></div>
+        </div>
+
+        <!-- Right Column: Speed Chart -->
+        <div class="card-stack">
+          <div class="card" id="speed-chart-card">
+            <div class="card-header">
+              <h2>ISS Speed Trend</h2>
+            </div>
+            <div class="chart-container">
+              <canvas id="speed-chart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- News & People Section -->
+    <section id="news-section" class="dashboard-section">
+      <div class="section-row">
+        <!-- Left: News -->
+        <div class="card">
+          <div class="card-header">
+            <h2>Breaking News</h2>
+            <button id="news-refresh-btn" class="btn btn-outline">Refresh</button>
+          </div>
+          <div class="news-controls">
+            <input type="text" id="news-search" class="input-field" placeholder="Search title, source, author..." />
+            <select id="news-sort" class="input-field select-field">
+              <option value="date">Sort by Date</option>
+              <option value="source">Sort by Source</option>
+            </select>
+          </div>
+          <div id="news-list" class="news-list">
+            <div class="skeleton-loader">Loading news articles...</div>
+          </div>
+        </div>
+
+        <!-- Right: People in Space & News Distribution -->
+        <div class="card-stack">
+          <!-- People in Space -->
+          <div class="card" id="astronauts-card">
+            <div class="card-header">
+              <h2>People in Space</h2>
+              <span class="badge badge-accent" id="astro-count" style="margin-left: auto;">0</span>
+            </div>
+            <div id="astronauts-list" class="astronauts-list">
+              <div class="skeleton-loader">Loading astronauts...</div>
+            </div>
+          </div>
+
+          <!-- News Distribution -->
+          <div class="card">
+            <div class="card-header">
+              <h2>News Distribution</h2>
+            </div>
+            <div class="chart-container">
+              <canvas id="news-chart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- Footer -->
+    <footer id="main-footer">
+      <p>Mission Control Dashboard &copy; 2026 — Built with ❤️ | ISS data from <a href="http://api.open-notify.org/" target="_blank">Open Notify API</a></p>
+    </footer>
+  </div>
+
+  <!-- Chatbot -->
+  <button id="chatbot-toggle" aria-label="Open AI Chat">
+    <span class="chat-icon">💬</span>
+  </button>
+  <div id="chatbot-window" class="chatbot-hidden">
+    <div class="chatbot-header">
+      <div class="chatbot-title">
+        <span>🤖</span>
+        <h3>Mission AI Assistant</h3>
+      </div>
+      <div class="chatbot-header-actions">
+        <button id="chat-clear" class="btn-icon" title="Clear chat">🗑️</button>
+        <button id="chatbot-close" class="btn-icon" title="Close">✕</button>
+      </div>
+    </div>
+    <div id="chat-messages" class="chat-messages">
+      <div class="chat-message bot-message">
+        <p>Hello! I'm your Mission Control AI. Ask me about the ISS position, speed, astronauts, or the latest news on the dashboard. I can only answer based on dashboard data.</p>
+      </div>
+    </div>
+    <div id="chat-typing" class="chat-typing hidden">
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+    </div>
+    <div class="chat-input-area">
+      <input type="text" id="chat-input" class="input-field" placeholder="Ask about ISS or news..." />
+      <button id="chat-send" class="btn btn-primary">Send</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
